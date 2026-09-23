@@ -13,9 +13,8 @@ import requests
 from bs4 import BeautifulSoup
 
 
-FUENTE_PRINCIPAL = "https://rss.elconfidencial.com/empresas/"
-FUENTES_ALTERNATIVAS = [
-    FUENTE_PRINCIPAL,
+FUENTES = [
+    "https://rss.elconfidencial.com/empresas/",
     "https://rss.elconfidencial.com/empresas",
     "http://rss.elconfidencial.com/empresas/",
 ]
@@ -25,9 +24,11 @@ ARCHIVO_RSS = Path("rss.xml")
 ZONA_ESPANA = ZoneInfo("Europe/Madrid")
 MAXIMO_NOTICIAS = 3000
 
+# Dirección correcta según el nombre real de tu repositorio.
 URL_RSS_GITHUB = (
     "https://raw.githubusercontent.com/"
-    "plis2100/rss-elconfidencial-empresas/main/rss.xml"
+    "plis2100/https-www.elconfidencial.com-empresas/"
+    "main/rss.xml"
 )
 
 CABECERAS = {
@@ -64,7 +65,7 @@ def ejecucion_permitida():
     )
 
     if ahora.weekday() == 6:
-        print("Es domingo. No se actualiza.")
+        print("Es domingo. No se actualiza el RSS.")
         return False
 
     if not 7 <= ahora.hour <= 22:
@@ -102,24 +103,53 @@ def limpiar_html(contenido):
     return str(soup).strip()
 
 
+def obtener_descripcion(entrada):
+    if entrada.get("content"):
+        contenido = entrada.content[0].get(
+            "value",
+            "",
+        )
+    else:
+        contenido = (
+            entrada.get("summary")
+            or entrada.get("description")
+            or ""
+        )
+
+    contenido = limpiar_html(contenido)
+
+    if not contenido:
+        contenido = (
+            "<p>Noticia publicada por "
+            "El Confidencial.</p>"
+        )
+
+    return contenido
+
+
 def extraer_imagen(entrada):
-    """
-    Busca la imagen en los campos habituales de RSS.
-    """
     for media in entrada.get("media_content", []):
         url = media.get("url", "").strip()
 
         if url:
             return url
 
-    for miniatura in entrada.get("media_thumbnail", []):
+    for miniatura in entrada.get(
+        "media_thumbnail",
+        [],
+    ):
         url = miniatura.get("url", "").strip()
 
         if url:
             return url
 
     for enclosure in entrada.get("enclosures", []):
-        url = enclosure.get("href", "").strip()
+        url = (
+            enclosure.get("href")
+            or enclosure.get("url")
+            or ""
+        ).strip()
+
         tipo = enclosure.get("type", "").lower()
 
         if url and (
@@ -155,9 +185,6 @@ def extraer_imagen(entrada):
 
 
 def convertir_fecha(entrada):
-    """
-    Convierte la fecha de Feedparser a una fecha UTC.
-    """
     estructura = (
         entrada.get("published_parsed")
         or entrada.get("updated_parsed")
@@ -175,16 +202,17 @@ def convertir_fecha(entrada):
                 estructura.tm_sec,
                 tzinfo=timezone.utc,
             )
+
         except (ValueError, AttributeError):
             pass
 
-    textos = [
+    posibles_fechas = [
         entrada.get("published", ""),
         entrada.get("updated", ""),
         entrada.get("created", ""),
     ]
 
-    for texto in textos:
+    for texto in posibles_fechas:
         if not texto:
             continue
 
@@ -204,34 +232,13 @@ def convertir_fecha(entrada):
     return datetime.now(timezone.utc)
 
 
-def obtener_descripcion(entrada):
-    if entrada.get("content"):
-        contenido = entrada.content[0].get(
-            "value",
-            "",
-        )
-    else:
-        contenido = (
-            entrada.get("summary")
-            or entrada.get("description")
-            or ""
-        )
-
-    contenido = limpiar_html(contenido)
-
-    if not contenido:
-        contenido = "<p>Noticia publicada por El Confidencial.</p>"
-
-    return contenido
-
-
 def descargar_fuente():
     session = requests.Session()
     session.headers.update(CABECERAS)
 
     errores = []
 
-    for url in FUENTES_ALTERNATIVAS:
+    for url in FUENTES:
         try:
             print(f"Descargando fuente: {url}")
 
@@ -250,7 +257,7 @@ def descargar_fuente():
 
             if len(respuesta.content) < 200:
                 raise RuntimeError(
-                    "La respuesta recibida es demasiado corta."
+                    "La respuesta es demasiado corta."
                 )
 
             fuente = feedparser.parse(
@@ -259,16 +266,17 @@ def descargar_fuente():
 
             if fuente.bozo and not fuente.entries:
                 raise RuntimeError(
-                    f"RSS no válido: {fuente.bozo_exception}"
+                    f"RSS no válido: "
+                    f"{fuente.bozo_exception}"
                 )
 
             if not fuente.entries:
                 raise RuntimeError(
-                    "La fuente no contiene entradas."
+                    "La fuente no contiene noticias."
                 )
 
             print(
-                f"Entradas recibidas de la fuente: "
+                f"Noticias recibidas: "
                 f"{len(fuente.entries)}"
             )
 
@@ -283,8 +291,8 @@ def descargar_fuente():
             )
 
     raise RuntimeError(
-        "No se pudo descargar ninguna dirección de la "
-        "RSS de Empresas: " + " | ".join(errores)
+        "No se pudo descargar la RSS de Empresas: "
+        + " | ".join(errores)
     )
 
 
@@ -295,6 +303,7 @@ def procesar_fuente(fuente):
         titulo = limpiar_texto(
             entrada.get("title", "")
         )
+
         enlace = (
             entrada.get("link")
             or entrada.get("id")
@@ -310,10 +319,6 @@ def procesar_fuente(fuente):
             or enlace
         ).strip()
 
-        fecha = convertir_fecha(entrada)
-        descripcion = obtener_descripcion(entrada)
-        imagen = extraer_imagen(entrada)
-
         autor = limpiar_texto(
             entrada.get("author", "")
         )
@@ -325,16 +330,21 @@ def procesar_fuente(fuente):
                 etiqueta.get("term", "")
             )
 
-            if categoria and categoria not in categorias:
+            if (
+                categoria
+                and categoria not in categorias
+            ):
                 categorias.append(categoria)
 
         noticias[guid] = {
             "titulo": titulo,
             "enlace": enlace,
             "guid": guid,
-            "fecha": fecha,
-            "descripcion": descripcion,
-            "imagen": imagen,
+            "fecha": convertir_fecha(entrada),
+            "descripcion": obtener_descripcion(
+                entrada
+            ),
+            "imagen": extraer_imagen(entrada),
             "autor": autor,
             "categorias": categorias,
         }
@@ -349,7 +359,10 @@ def leer_rss_anterior():
         return anteriores
 
     try:
-        raiz = ET.parse(ARCHIVO_RSS).getroot()
+        raiz = ET.parse(
+            ARCHIVO_RSS
+        ).getroot()
+
         canal = raiz.find("channel")
 
         if canal is None:
@@ -393,7 +406,9 @@ def leer_rss_anterior():
                         tzinfo=timezone.utc
                     )
 
-                fecha = fecha.astimezone(timezone.utc)
+                fecha = fecha.astimezone(
+                    timezone.utc
+                )
 
             except (ValueError, TypeError):
                 fecha = datetime(
@@ -407,11 +422,16 @@ def leer_rss_anterior():
             imagen = ""
 
             if enclosure is not None:
-                imagen = enclosure.get("url", "")
+                imagen = enclosure.get(
+                    "url",
+                    "",
+                )
 
             categorias = [
                 limpiar_texto(categoria.text)
-                for categoria in item.findall("category")
+                for categoria in item.findall(
+                    "category"
+                )
                 if categoria.text
             ]
 
@@ -428,7 +448,8 @@ def leer_rss_anterior():
 
     except Exception as error:
         print(
-            f"AVISO: no se pudo leer el RSS anterior: {error}",
+            f"AVISO: no se pudo leer el RSS anterior: "
+            f"{error}",
             file=sys.stderr,
         )
 
@@ -447,20 +468,39 @@ def escribir_rss(noticias):
     )
     canal = ET.SubElement(rss, "channel")
 
-    ET.SubElement(canal, "title").text = (
-        "El Confidencial — Empresas"
+    ET.SubElement(
+        canal,
+        "title",
+    ).text = "El Confidencial — Empresas"
+
+    ET.SubElement(
+        canal,
+        "link",
+    ).text = PAGINA_EMPRESAS
+
+    ET.SubElement(
+        canal,
+        "description",
+    ).text = (
+        "Noticias de empresas publicadas "
+        "por El Confidencial."
     )
-    ET.SubElement(canal, "link").text = (
-        PAGINA_EMPRESAS
-    )
-    ET.SubElement(canal, "description").text = (
-        "Noticias de empresas publicadas por "
-        "El Confidencial."
-    )
-    ET.SubElement(canal, "language").text = "es-ES"
-    ET.SubElement(canal, "ttl").text = "60"
-    ET.SubElement(canal, "lastBuildDate").text = (
-        format_datetime(datetime.now(timezone.utc))
+
+    ET.SubElement(
+        canal,
+        "language",
+    ).text = "es-ES"
+
+    ET.SubElement(
+        canal,
+        "ttl",
+    ).text = "60"
+
+    ET.SubElement(
+        canal,
+        "lastBuildDate",
+    ).text = format_datetime(
+        datetime.now(timezone.utc)
     )
 
     atom = ET.SubElement(
@@ -472,34 +512,46 @@ def escribir_rss(noticias):
     atom.set("type", "application/rss+xml")
 
     for noticia in noticias[:MAXIMO_NOTICIAS]:
-        item = ET.SubElement(canal, "item")
+        item = ET.SubElement(
+            canal,
+            "item",
+        )
 
-        ET.SubElement(item, "title").text = (
-            noticia["titulo"]
-        )
-        ET.SubElement(item, "link").text = (
-            noticia["enlace"]
-        )
+        ET.SubElement(
+            item,
+            "title",
+        ).text = noticia["titulo"]
+
+        ET.SubElement(
+            item,
+            "link",
+        ).text = noticia["enlace"]
+
         ET.SubElement(
             item,
             "guid",
             {"isPermaLink": "false"},
         ).text = noticia["guid"]
-        ET.SubElement(item, "pubDate").text = (
-            format_datetime(
-                noticia["fecha"].astimezone(
-                    timezone.utc
-                )
+
+        ET.SubElement(
+            item,
+            "pubDate",
+        ).text = format_datetime(
+            noticia["fecha"].astimezone(
+                timezone.utc
             )
-        )
-        ET.SubElement(item, "description").text = (
-            noticia["descripcion"]
         )
 
+        ET.SubElement(
+            item,
+            "description",
+        ).text = noticia["descripcion"]
+
         if noticia.get("autor"):
-            ET.SubElement(item, "author").text = (
-                noticia["autor"]
-            )
+            ET.SubElement(
+                item,
+                "author",
+            ).text = noticia["autor"]
 
         for categoria in noticia.get(
             "categorias",
@@ -547,8 +599,8 @@ def main():
 
         if anteriores:
             print(
-                "Se conserva el RSS anterior para evitar "
-                "publicar un archivo vacío."
+                "Se conserva el RSS anterior para "
+                "evitar publicar un archivo vacío."
             )
             return
 
@@ -563,7 +615,10 @@ def main():
         reverse=True,
     )
 
-    print(f"Noticias recuperadas ahora: {len(nuevas)}")
+    print(
+        f"Noticias recuperadas ahora: "
+        f"{len(nuevas)}"
+    )
     print(
         f"Noticias conservadas anteriormente: "
         f"{len(anteriores)}"
@@ -575,7 +630,8 @@ def main():
 
     if not ordenadas:
         raise RuntimeError(
-            "No se encontró ninguna noticia de Empresas."
+            "No se encontró ninguna noticia "
+            "de Empresas."
         )
 
     escribir_rss(ordenadas)
@@ -583,6 +639,9 @@ def main():
     print(
         "RSS de El Confidencial Empresas "
         "generado correctamente."
+    )
+    print(
+        f"URL para Feedly: {URL_RSS_GITHUB}"
     )
 
 
