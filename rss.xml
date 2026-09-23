@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>El Confidencial — Empresas</title>
+    <link>https://www.elconfidencial.com/empresas/</link>
+    <description>Noticias de empresas publicadas por El Confidencial.</description>
+    <language>es-ES</language>
+    <ttl>60</ttl>
+    <atom:link href="https://raw.githubusercontent.com/plis2100/rss-elconfidencial-empresas/main/rss.xml"
+               rel="self"
+               type="application/rss+xml"/>
+  </channel>
+</rss>
